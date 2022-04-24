@@ -8,11 +8,11 @@
 
 class Command {
 // TODO: Add your data members
-    char *name;
+    char *cmd_line;
     int
 public:
     Command(const char *cmd_line);
-
+    string getCommandLine();
     virtual ~Command();
 
     virtual void execute() = 0;
