@@ -6,23 +6,41 @@
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
 
-class Command {
-// TODO: Add your data members
-    char *name;
-    const char *arg;
-public:
-    Command(const char *cmd_line) : arg(cmd_line) {}
+int _parseCommandLine(const char *cmd_line, char **args);
 
-    virtual ~Command();
+class Command {
+    string name;
+    char **args;
+    int argsCount;
+public:
+    Command(const char *cmd_line) {
+        char *args[COMMAND_MAX_ARGS];
+        int argsCount = _parseCommandLine(cmd_line, args);
+        name = string(args[0]);
+    }
+
+    virtual ~Command() {
+        delete[] args;
+    }
 
     virtual void execute() = 0;
-    //virtual void prepare();
-    //virtual void cleanup();
+
+    //todo virtual void prepare();
+    //todo virtual void cleanup();
     // TODO: Add your extra methods if needed
-    const char* getArg(){
-        return arg;
+    char **getArgs() {
+        return args;
+    }
+
+    int getArgsCount() {
+        return argsCount;
+    }
+
+    string getName() {
+        return name;
     }
 };
+
 
 class BuiltInCommand : public Command {
 public:
@@ -53,7 +71,7 @@ public:
 class RedirectionCommand : public Command {
     // TODO: Add your data members
 public:
-    explicit RedirectionCommand(const char *cmd_line);
+    explicit RedirectionCommand(const char *cmd_line) : Command(cmd_line) {}
 
     virtual ~RedirectionCommand() {}
 
@@ -62,20 +80,25 @@ public:
     //void cleanup() override;
 };
 
+class ChangePromptCommand : public BuiltInCommand {
+    string *prompt;
+public:
+    ChangePromptCommand(const char *cmd_line, string *prompt) : BuiltInCommand(cmd_line), prompt(prompt) {}
+
+    void execute() override;
+
+};
+
 class ChangeDirCommand : public BuiltInCommand {
     char **plastPwd;
 public:
     ChangeDirCommand(const char *cmd_line, char **plastPwd) : BuiltInCommand(cmd_line), plastPwd(plastPwd) {}
 
-    virtual ~ChangeDirCommand() {}
-
-    void execute() override {
-        std::string path = std::string(getArg());
-        if (path.compare("-") == 0)
-            chdir(*plastPwd);
-        else
-            chdir(getArg());
+    virtual ~ChangeDirCommand() {
+        delete plastPwd;
     }
+
+    void execute() override;
 };
 
 class GetCurrDirCommand : public BuiltInCommand {
@@ -91,7 +114,7 @@ public:
 
 class ShowPidCommand : public BuiltInCommand {
 public:
-    ShowPidCommand(const char *cmd_line);
+    ShowPidCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
 
     virtual ~ShowPidCommand() {}
 
@@ -150,7 +173,7 @@ public:
 };
 
 class KillCommand : public BuiltInCommand {
-    // TODO: Add your data members
+    JobsList *jobs;
 public:
     KillCommand(const char *cmd_line, JobsList *jobs);
 
@@ -200,14 +223,12 @@ public:
 
 class SmallShell {
 private:
-    std::string prompt;
-    std::string path;
-    std::vector<char *> previousPaths;
+    string prompt;
+    string path;
+    char **plastPwd;
+    JobsList *jobs;
 
-    SmallShell(std::string prompt = "smash", std::string path = "", std::vector<char *> prev = std::vector<char *>())
-            : prompt(prompt),
-              path(path),
-              previousPaths(prev) {}
+    SmallShell();
 
 public:
     Command *CreateCommand(const char *cmd_line);
@@ -222,29 +243,26 @@ public:
     }
 
     ~SmallShell();
-
+//hagai: need to delete finished jobs before any execute
     void executeCommand(const char *cmd_line);
 
-    std::string getPrompt() {
+    string getPrompt() {
         return prompt;
     }
 
-    std::string getCurrentPath() {
-        return path;
+
+    void setPrompt(const string p) {
+        prompt = p;
     }
 
-    std::string getPreviousPath() {
-        return lastPath;
+    int getPid() {
+        return getpid();
     }
 
-    void setPrompt(const std::string p) {
-        prompt = p == "\0" ? "smash" : p;
+    JobsList *getJobList() {
+        return jobs;
     }
 
-    void setPath(const std::string newPath) {
-        lastPath = path;
-        path = newPath;
-    }
     // TODO: add extra methods as needed
 };
 

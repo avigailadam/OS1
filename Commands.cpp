@@ -23,6 +23,11 @@ using namespace std;
 #define FUNC_EXIT()
 #endif
 
+#define PRINT_SMASH_ERROR_AND_RETURN(message)  do { \
+    cout << "smash error: " << getName() << ":" << message << endl; \
+    return;} while(0)
+
+
 const std::string WHITESPACE = " \n\r\t\f\v";
 
 string _ltrim(const std::string &s) {
@@ -54,9 +59,6 @@ int _parseCommandLine(const char *cmd_line, char **args) {
     FUNC_EXIT()
 }
 
-string Command::getCommandLine() {
-    return cmd_line;
-}
 
 bool _isBackgroundComamnd(const char *cmd_line) {
     const string str(cmd_line);
@@ -84,11 +86,11 @@ void _removeBackgroundSign(char *cmd_line) {
 // TODO: Add your implementation for classes in Commands.h 
 
 SmallShell::SmallShell() {
-// TODO: add your implementation
+    prompt = "smash";
 }
 
 SmallShell::~SmallShell() {
-// TODO: add your implementation
+    delete plastPwd;
 }
 
 /**
@@ -99,19 +101,23 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
     string cmd_s = _trim(string(cmd_line));
     string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
 
+
     if (firstWord.compare("pwd") == 0) {
         return new GetCurrDirCommand(cmd_line);
     } else if (firstWord.compare("showpid") == 0) {
         return new ShowPidCommand(cmd_line);
     } else if (firstWord.compare("chprompt") == 0) {
-        string newPrompt = cmd_s.substr(1, cmd_s.find_first_of(" \n"));
-        setPrompt(newPrompt);
+        return new ChangePromptCommand(cmd_line, &prompt);
     } else if (firstWord.compare("cd") == 0) {
-        previousPaths.push_back(getcwd())
-        return new ChangeDirCommand(cmd_s.substr(1, cmd_s.find_first_of(" \n")).c_str(), &(previousPaths.front()));
-//      path = path.compare("-") == 0 ? getPreviousPath() : path;
-//      setPath(path);
-//      chdir(path.c_str());
+        return new ChangeDirCommand(cmd_line, plastPwd);
+    } else if (firstWord.compare("kill") == 0) {
+        return new KillCommand(cmd_line, jobs);
+    } else if (firstWord.compare("jobs") == 0) {
+        return new JobsCommand(cmd_line, jobs);
+    } else if (firstWord.compare("fg") == 0) {
+        return new ForegroundCommand(cmd_line, jobs);
+    } else if (firstWord.compare("bg") == 0) {
+        return new BackgroundCommand(cmd_line, jobs);
     } else {
         return new ExternalCommand(cmd_line);
     }
@@ -127,9 +133,68 @@ void SmallShell::executeCommand(const char *cmd_line) {
     // Please note that you must fork smash process for some commands (e.g., external commands....)
 }
 
-ChangePromptCommand::ChangePromptCommand(const char *cmd_line) {
-    char *args[COMMAND_MAX_ARGS];
-    int argc = _parseCommandLine(getCommandLine().c_str(), args);
-    *prompt_line = argc == 1 ? "smash" : *prompt_line = string(args[1]);
-    freeArgs(args, argc);
+void ChangePromptCommand::execute() {
+    *prompt = getArgsCount() == 1 ? "smash" : string(getArgs()[1]);
+}
+
+void GetCurrDirCommand::execute() {
+    char *pwd = get_current_dir_name();
+    cout << pwd << endl;
+}
+
+void ShowPidCommand::execute() {
+    SmallShell &smash = SmallShell::getInstance();
+    cout << "smash pid is" << smash.getPid() << endl;
+}
+
+void ChangeDirCommand::execute() {
+    if (getArgsCount() > 2)
+        PRINT_SMASH_ERROR_AND_RETURN("too many arguments");
+    string path = string(getArgs()[1]);
+    if (path.compare("-") == 0) {
+        if (plastPwd == nullptr)
+            PRINT_SMASH_ERROR_AND_RETURN("OLDPWD not set");
+        char *tmp = get_current_dir_name();
+        chdir(*plastPwd);
+        delete plastPwd;
+        *plastPwd = tmp;
+        return;
+    }
+    if (path.compare("\0") == 0)
+        path = get_current_dir_name();
+    *plastPwd = get_current_dir_name();
+    chdir(path.c_str());
+
+}
+
+void KillCommand::execute() {
+    if (getArgsCount() != 3 || stoi(string(getArgs()[1])) >= 0)
+        PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
+    int sigNum = stoi(string(getArgs()[1]));
+    sigNum *= (-1);
+    int jobId = stoi(string(getArgs()[2]));
+    if (!jobs->jobExist(jobId))
+        PRINT_SMASH_ERROR_AND_RETURN("job-id" + to_string(jobId) + "does not exist");
+    int pid = jobs->getJobById(jobId)->getProcessId();
+    if (kill(pid, sigNum) == 0) {
+        cout << "signal number " << sigNum << " was sent to pid " << pid << endl;
+        return;
+    }
+    //handle perror
+
+}
+
+void JobsCommand::execute() {
+    jobs->removeFinishedJobs();
+    jobs->printJobsList();
+}
+
+void ForegroundCommand::execute() {
+    if (getArgsCount() > 2 || getArgsCount() == 0)
+        PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
+    if(getArgsCount()==1){
+
+    }
+    int jobId = stoi(string(getArgs()[1]));
+
 }
