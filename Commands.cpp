@@ -104,7 +104,14 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
     } else if (firstWord.compare("showpid") == 0) {
         return new ShowPidCommand(cmd_line);
     } else if (firstWord.compare("chprompt") == 0) {
-        return new ChangePromptCommand(cmd_line);
+        string newPrompt = cmd_s.substr(1, cmd_s.find_first_of(" \n"));
+        setPrompt(newPrompt);
+    } else if (firstWord.compare("cd") == 0) {
+        previousPaths.push_back(getcwd())
+        return new ChangeDirCommand(cmd_s.substr(1, cmd_s.find_first_of(" \n")).c_str(), &(previousPaths.front()));
+//      path = path.compare("-") == 0 ? getPreviousPath() : path;
+//      setPath(path);
+//      chdir(path.c_str());
     } else {
         return new ExternalCommand(cmd_line);
     }

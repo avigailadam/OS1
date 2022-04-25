@@ -8,17 +8,20 @@
 
 class Command {
 // TODO: Add your data members
-    char *cmd_line;
-    int
+    char *name;
+    const char *arg;
 public:
-    Command(const char *cmd_line);
-    string getCommandLine();
+    Command(const char *cmd_line) : arg(cmd_line) {}
+
     virtual ~Command();
 
     virtual void execute() = 0;
     //virtual void prepare();
     //virtual void cleanup();
     // TODO: Add your extra methods if needed
+    const char* getArg(){
+        return arg;
+    }
 };
 
 class BuiltInCommand : public Command {
@@ -60,21 +63,30 @@ public:
 };
 
 class ChangeDirCommand : public BuiltInCommand {
-// TODO: Add your data members public:
-    ChangeDirCommand(const char *cmd_line, char **plastPwd);
+    char **plastPwd;
+public:
+    ChangeDirCommand(const char *cmd_line, char **plastPwd) : BuiltInCommand(cmd_line), plastPwd(plastPwd) {}
 
     virtual ~ChangeDirCommand() {}
 
-    void execute() override;
+    void execute() override {
+        std::string path = std::string(getArg());
+        if (path.compare("-") == 0)
+            chdir(*plastPwd);
+        else
+            chdir(getArg());
+    }
 };
 
 class GetCurrDirCommand : public BuiltInCommand {
 public:
-    GetCurrDirCommand(const char *cmd_line);
+    GetCurrDirCommand(const char *cmd_line) : BuiltInCommand(cmd_line) {}
 
     virtual ~GetCurrDirCommand() {}
 
-    void execute() override;
+    void execute() override {
+
+    }
 };
 
 class ShowPidCommand : public BuiltInCommand {
@@ -82,15 +94,6 @@ public:
     ShowPidCommand(const char *cmd_line);
 
     virtual ~ShowPidCommand() {}
-
-    void execute() override;
-};
-
-class ChangePromptCommand : public BuiltInCommand {
-public:
-    ChangePromptCommand(const char *cmd_line);
-
-    virtual ~ChangePromptCommand() {}
 
     void execute() override;
 };
@@ -198,8 +201,13 @@ public:
 class SmallShell {
 private:
     std::string prompt;
+    std::string path;
+    std::vector<char *> previousPaths;
 
-    SmallShell(std::string prompt = "smash");
+    SmallShell(std::string prompt = "smash", std::string path = "", std::vector<char *> prev = std::vector<char *>())
+            : prompt(prompt),
+              path(path),
+              previousPaths(prev) {}
 
 public:
     Command *CreateCommand(const char *cmd_line);
@@ -221,8 +229,21 @@ public:
         return prompt;
     }
 
+    std::string getCurrentPath() {
+        return path;
+    }
+
+    std::string getPreviousPath() {
+        return lastPath;
+    }
+
     void setPrompt(const std::string p) {
         prompt = p == "\0" ? "smash" : p;
+    }
+
+    void setPath(const std::string newPath) {
+        lastPath = path;
+        path = newPath;
     }
     // TODO: add extra methods as needed
 };
