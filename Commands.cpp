@@ -24,7 +24,7 @@ using namespace std;
 #endif
 
 #define PRINT_SMASH_ERROR_AND_RETURN(message)  do { \
-    cout << "smash error: " << getName() << ":" << message << endl; \
+    cerr << "smash error: " << getName() << ":" << message << endl; \
     return;} while(0)
 
 
@@ -118,6 +118,8 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
         return new ForegroundCommand(cmd_line, jobs);
     } else if (firstWord.compare("bg") == 0) {
         return new BackgroundCommand(cmd_line, jobs);
+    } else if (firstWord.compare("quit") == 0) {
+        return new QuitCommand(cmd_line, jobs);
     } else {
         return new ExternalCommand(cmd_line);
     }
@@ -190,11 +192,62 @@ void JobsCommand::execute() {
 }
 
 void ForegroundCommand::execute() {
+    JobsList::JobEntry *currJob = nullptr;
     if (getArgsCount() > 2 || getArgsCount() == 0)
         PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
-    if(getArgsCount()==1){
 
+    if (getArgsCount() == 1) {
+        if (jobs->empty())
+            PRINT_SMASH_ERROR_AND_RETURN("jobs list is empty");
+        currJob = jobs->getMaxJobById();
+    } else {
+        int jobId = stoi(string(getArgs()[1]));
+        currJob = jobs->getJobById(jobId);
+        if (currJob == nullptr) {
+            cerr << "smash error: fg: job-id" << jobId << "does not exists" << endl;
+            return;
+        }
     }
-    int jobId = stoi(string(getArgs()[1]));
+    pid_t pid = currJob->getProcessId();
+    cout << currJob->getCmd() << " : " << pid << endl;
+    if (kill(pid, SIGCONT) == -1)
+        perror("smash error: kill failed");
+    if (waitpid(pid, nullptr, 0) == -1)
+        perror("smash error: waitpid failed");
+    jobs->removeJobById(currJob->getJobId());
+}
 
+void BackgroundCommand::execute() {
+    JobsList::JobEntry *currJob = nullptr;
+    if (getArgsCount() > 2 || getArgsCount() == 0)
+        PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
+    JobsList::jobEntry *job = nullptr;
+    if (getArgsCount() == 1) {///one argument
+        int *jobId = nullptr;
+        job = getLastStoppedJob(jobId);
+        if (job == nullptr) {
+            perror("smash error: bg: there is no stopped jobs to resume");
+            return;
+        }
+    } else { ///two arguments
+        job = JobsList::getJobById(getArgs()[1]);
+        if (job == nullptr) {
+            cerr << "smash error: bg: job-id " << (*jobId) << " does not exist" << endl;
+            return;
+        }
+        if (!job->isStoppedJob()) {
+            cerr << "smash error: bg: job-id " << getArgs()[1] << " is already running in the background" << endl;
+            return;
+        }
+    }
+    cout << job.getCmd()<< " : "<< job->getProcessId() << endl;
+    if (kill(job->getProcessId(), SIGCONT) == -1)
+        perror("smash error: kill failed");
+    job->setNotStopped();
+}
+
+void QuitCommand::execute() {
+    if (getArgsCount() >= 1 && string(getArgs()[1]) == "kill")
+        jobs->killAllJobs();
+    exit(0);
 }
