@@ -19,8 +19,8 @@ class Command {
     char *cmd_line;
 public:
     Command(const char *cmd_line) {
-        char *args[COMMAND_MAX_ARGS];
-        int argsCount = _parseCommandLine(cmd_line, args);
+        args = new char *[COMMAND_MAX_ARGS];
+        argsCount = _parseCommandLine(cmd_line, args);
         name = string(args[0]);
         cmd_line = cmd_line;
     }
@@ -38,15 +38,15 @@ public:
         return args;
     }
 
-    string getCmdLine() {
+    string getCmdLine() const {
         return string(cmd_line);
     }
 
-    int getArgsCount() {
+    int getArgsCount() const {
         return argsCount;
     }
 
-    string getName() {
+    string getName() const {
         return name;
     }
 };
@@ -54,16 +54,16 @@ public:
 
 class BuiltInCommand : public Command {
 public:
-    BuiltInCommand(const char *cmd_line);
+    BuiltInCommand(const char *cmd_line) : Command(cmd_line) {}
 
-    virtual ~BuiltInCommand() {}
+    virtual ~BuiltInCommand() = default;
 };
 
 class ExternalCommand : public Command {
 public:
-    ExternalCommand(const char *cmd_line);
+    ExternalCommand(const char *cmd_line) : Command(cmd_line) {}
 
-    virtual ~ExternalCommand() {}
+    virtual ~ExternalCommand() = default;
 
     void execute() override;
 };
@@ -141,62 +141,12 @@ public:
     void execute() override;
 };
 
-
 class JobsList {
-
 public:
-    class JobEntry {
-        int processId;
-        int jobId;
-        Command *cmd;
-        time_t timeInserted;
-        bool isStopped;
-    public:
-        JobEntry(int processId, int jobId, Command *cmd, time_t timeInserted, bool isStopped) : processId(processId),
-                                                                                                jobId(jobId), cmd(cmd),
-                                                                                                timeInserted(
-                                                                                                        time(nullptr)),
-                                                                                                isStopped(isStopped) {}
-
-        int getProcessId() {
-            return processId;
-        }
-
-        bool operator<(const JobEntry &other) {
-            return jobId < other.jobId;
-        }
-
-        bool sortByTime(const JobEntry a, const JobEntry b) {
-            return difftime(a.timeInserted, b.timeInserted) > 0;
-        }
-
-        int getJobId() {
-            return jobId;
-        }
-
-        char *getCommandName() {
-            return cmd->getArgs()[0];
-        }
-
-        string getCmd() {
-            return cmd->getCmdLine();
-        }
-
-        time_t getTime() {
-            return timeInserted;
-        }
-
-        bool isStoppedJob() {
-            return isStopped;
-        }
-
-        void setNotStopped() {
-            isStopped = false;
-        }
-    };
-
-    // TODO: Add your data members
-    vector <JobEntry> list;
+    class JobEntry;
+private:
+    vector<JobEntry> list;
+    int currJobId;
 public:
     JobsList();
 
@@ -214,6 +164,8 @@ public:
             cout << endl;
         }
     }
+
+    void insertJob(string cmd_line);
 
     void killAllJobs() {
         removeFinishedJobs();
@@ -242,14 +194,20 @@ public:
         }
     }
 
-    JobEntry *getJobById(int jobId) {
-        auto job = list.begin();
-        while (job != list.end()) {
-            if (job->getJobId() == jobId)
-                return &(*job);
-            job++;
+    void killAllJobs() {
+        removeFinishedJobs();
+        std::sort(list.begin(), list.end());
+        cout << "sending SIGKILL signal to " << list.size() << " jobs:" << endl;
+        for (JobEntry job: list) {
+            pid_t pid = job.getProcessId();
+            cout << pid << ": " << job.getCmd() << endl;
+            if (kill(pid, SIGKILL) == -1)
+                perror("smash error: kill failed");
         }
-        return nullptr;
+    }
+
+    bool empty() {
+        return list.empty();
     }
 
     bool jobExist(int jobId);
@@ -267,11 +225,11 @@ public:
         }
     }
 
-
     JobEntry *getLastJob(int *lastJobId);
 
     JobEntry *getLastStoppedJob(int *jobId) {
-        sort(list.begin(), list.end(), JobEntry::sortByTime);
+
+        sort(list.begin(), list.end(), sortJobEntryByTime);
         int i = list.size();
         while (i > 0) {
             if (list[i - 1].isStoppedJob()) {
@@ -294,14 +252,71 @@ public:
         return &(*max);
     }
 
+    class JobEntry {
+        int processId;
+        int jobId;
+        Command *cmd;
+        time_t timeInserted;
+        bool isStopped;
+    public:
+        JobEntry(int processId, int jobId, Command *cmd, time_t timeInserted, bool isStopped) : processId(processId),
+                                                                                                jobId(jobId), cmd(cmd),
+                                                                                                timeInserted(
+                                                                                                        time(nullptr)),
+                                                                                                isStopped(isStopped) {}
+
+        int getProcessId() {
+            return processId;
+        }
+
+        bool operator<(const JobEntry &other) {
+            return jobId < other.jobId;
+        }
 
 
-    // TODO: Add extra methods or modify exisitng ones as needed
+        int getJobId() {
+            return jobId;
+        }
+
+        char *getCommandName() {
+            return cmd->getArgs()[0];
+        }
+
+        string getCmd() {
+            return cmd->getCmdLine();
+        }
+
+        time_t getTime() const {
+            return timeInserted;
+        }
+
+        bool isStoppedJob() {
+            return isStopped;
+        }
+
+        void setNotStopped() {
+            isStopped = false;
+        }
+
+        bool sortTime(const JobEntry other) {
+            return difftime(getTime(), other.getTime()) > 0;
+        }
+    };
 };
+
+void JobsList::insertJob(string cmd_line) {
+
+}
+
+bool JobsList::jobExist(int jobId) {
+    for (JobEntry job: list)
+        if (job.getJobId() == jobId)
+            return true;
+    return false;
+}
 
 class JobsCommand : public BuiltInCommand {
     JobsList *jobs;
-    // TODO: Add your data members
 public:
     JobsCommand(const char *cmd_line, JobsList *jobs) : BuiltInCommand(cmd_line), jobs(jobs) {}
 
@@ -328,7 +343,6 @@ public:
     virtual ~ForegroundCommand() {}
 
     void execute() override;
-
 };
 
 class BackgroundCommand : public BuiltInCommand {
@@ -363,7 +377,6 @@ public:
 class SmallShell {
 private:
     string prompt;
-    string path;
     char **plastPwd;
     JobsList *jobs;
 

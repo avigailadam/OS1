@@ -1,14 +1,10 @@
 #include <unistd.h>
-#include <string.h>
+#include <cstring>
 #include <iostream>
 #include <vector>
 #include <sstream>
 #include <sys/wait.h>
-#include <iomanip>
 #include "Commands.h"
-#include <time.h>
-#include <utime.h>
-
 
 using namespace std;
 
@@ -24,7 +20,7 @@ using namespace std;
 #endif
 
 #define PRINT_SMASH_ERROR_AND_RETURN(message)  do { \
-    cerr << "smash error: " << getName() << ":" << message << endl; \
+    cerr << "smash error: " << getName() << ":" << (message) << endl; \
     return;} while(0)
 
 
@@ -47,12 +43,12 @@ string _trim(const std::string &s) {
 int _parseCommandLine(const char *cmd_line, char **args) {
     FUNC_ENTRY()
     int i = 0;
-    std::istringstream iss(_trim(string(cmd_line)).c_str());
+    std::istringstream iss(_trim(string(cmd_line)));
     for (std::string s; iss >> s;) {
         args[i] = (char *) malloc(s.length() + 1);
         memset(args[i], 0, s.length() + 1);
         strcpy(args[i], s.c_str());
-        args[++i] = NULL;
+        args[++i] = nullptr;
     }
     return i;
 
@@ -87,6 +83,8 @@ void _removeBackgroundSign(char *cmd_line) {
 
 SmallShell::SmallShell() {
     prompt = "smash";
+    plastPwd = nullptr;
+    jobs = nullptr;
 }
 
 SmallShell::~SmallShell() {
@@ -128,11 +126,9 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
 }
 
 void SmallShell::executeCommand(const char *cmd_line) {
-    // TODO: Add your implementation here
-    // for example:
-    // Command* cmd = CreateCommand(cmd_line);
-    // cmd->execute();
-    // Please note that you must fork smash process for some commands (e.g., external commands....)
+    Command *cmd = CreateCommand(cmd_line);
+    cmd->execute();
+
 }
 
 void ChangePromptCommand::execute() {
@@ -157,7 +153,8 @@ void ChangeDirCommand::execute() {
         if (plastPwd == nullptr)
             PRINT_SMASH_ERROR_AND_RETURN("OLDPWD not set");
         char *tmp = get_current_dir_name();
-        chdir(*plastPwd);
+        if (chdir(*plastPwd) == FAILURE)
+            SYS_CALL_ERROR_MESSAGE("chdir");
         delete plastPwd;
         *plastPwd = tmp;
         return;
@@ -173,17 +170,14 @@ void KillCommand::execute() {
     if (getArgsCount() != 3 || stoi(string(getArgs()[1])) >= 0)
         PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
     int sigNum = stoi(string(getArgs()[1]));
-    sigNum *= (-1);
+    sigNum *= (FAILURE);
     int jobId = stoi(string(getArgs()[2]));
     if (!jobs->jobExist(jobId))
         PRINT_SMASH_ERROR_AND_RETURN("job-id" + to_string(jobId) + "does not exist");
     int pid = jobs->getJobById(jobId)->getProcessId();
-    if (kill(pid, sigNum) == 0) {
-        cout << "signal number " << sigNum << " was sent to pid " << pid << endl;
-        return;
-    }
-    //handle perror
-
+    if (kill(pid, sigNum) == FAILURE)
+        SYS_CALL_ERROR_MESSAGE("kill");
+    cout << "signal number " << sigNum << " was sent to pid " << pid << endl;
 }
 
 void JobsCommand::execute() {
@@ -192,10 +186,9 @@ void JobsCommand::execute() {
 }
 
 void ForegroundCommand::execute() {
-    JobsList::JobEntry *currJob = nullptr;
+    JobsList::JobEntry *currJob;
     if (getArgsCount() > 2 || getArgsCount() == 0)
         PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
-
     if (getArgsCount() == 1) {
         if (jobs->empty())
             PRINT_SMASH_ERROR_AND_RETURN("jobs list is empty");
@@ -221,16 +214,14 @@ void BackgroundCommand::execute() {
     JobsList::JobEntry *currJob = nullptr;
     if (getArgsCount() > 2 || getArgsCount() == 0)
         PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
-    JobsList::jobEntry *job = nullptr;
-    if (getArgsCount() == 1) {///one argument
-        int *jobId = nullptr;
-        job = getLastStoppedJob(jobId);
-        if (job == nullptr) {
-            perror("smash error: bg: there is no stopped jobs to resume");
-            return;
-        }
-    } else { ///two arguments
-        job = JobsList::getJobById(getArgs()[1]);
+    JobsList::JobEntry *job;
+    if (getArgsCount() == 1) {
+        int *jobId;
+        job = jobs->getLastStoppedJob(jobId);
+        if (job == nullptr)
+            PRINT_SMASH_ERROR_AND_RETURN("there is no stopped jobs to resume");
+    } else {
+        job = jobs->getJobById(stoi(string((getArgs()[1]))));
         if (job == nullptr) {
             cerr << "smash error: bg: job-id " << (*jobId) << " does not exist" << endl;
             return;
@@ -240,14 +231,39 @@ void BackgroundCommand::execute() {
             return;
         }
     }
-    cout << job.getCmd()<< " : "<< job->getProcessId() << endl;
-    if (kill(job->getProcessId(), SIGCONT) == -1)
-        perror("smash error: kill failed");
+    cout << job->getCmd() << " : " << job->getProcessId() << endl;
+    if (kill(job->getProcessId(), SIGCONT) == FAILURE)
+        SYS_CALL_ERROR_MESSAGE("kill");
     job->setNotStopped();
 }
 
 void QuitCommand::execute() {
-    if (getArgsCount() >= 1 && string(getArgs()[1]) == "kill")
+    if (getArgsCount() >= 1 && string(getArgs()[1]).compare("kill"))
         jobs->killAllJobs();
     exit(0);
+}
+
+void ExternalCommand::execute() {
+    int pid = fork();
+    if (pid == FAILURE)
+        SYS_CALL_ERROR_MESSAGE("fork");
+    if (pid == 0) {
+        setpgrp();
+        if (string(getArgs()[getArgsCount() - 1])[FAILURE] == '&') {
+            SmallShell &smash = SmallShell::getInstance();
+            smash.getJobList()->addJob(this, false);
+        }
+        char **argv = new char *[getArgsCount() + 2];
+        argv[0] = (char *) malloc(10);
+        strcpy(argv[0], "/bin/bash");
+        argv[getArgsCount() + 1] = nullptr;
+        for (int i = 1; i < getArgsCount() + 1; ++i)
+            argv[i] = getArgs()[i - 1];
+        if (execv(argv[0], argv) == FAILURE)
+            SYS_CALL_ERROR_MESSAGE("execv");
+    } else {
+        if (string(getArgs()[getArgsCount() - 1])[FAILURE] != '&')
+            if (waitpid(pid, nullptr, WUNTRACED) == FAILURE)
+                SYS_CALL_ERROR_MESSAGE("waitpid");
+    }
 }
