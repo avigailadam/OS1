@@ -5,6 +5,10 @@
 #include <algorithm>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <cassert>
+#include <cstring>
+#include <iostream>
+#include <sstream>
 
 using namespace std;
 #define COMMAND_ARGS_MAX_LENGTH (200)
@@ -26,9 +30,10 @@ public:
     }
 
     virtual ~Command() {
-        for(int i=0;i<argsCount;i++)
+        for (int i = 0; i < argsCount; i++)
             free(args[i]);
         delete[] args;
+        delete cmd_line;
     }
 
     virtual void execute() = 0;
@@ -150,18 +155,18 @@ private:
     vector<JobEntry> list;
     int currJobId;
 public:
-    JobsList(): currJobId(1){}
+    JobsList() : currJobId(1) {}
 
     ~JobsList();
 
-    void addJob(Command *cmd, bool isStopped = false){
-        JobEntry job(getpid(),getJobIdToSet(),cmd,time(nullptr),isStopped);
+    void addJob(Command *cmd, bool isStopped = false) {
+        JobEntry job(getpid(), getJobIdToSet(), cmd, time(nullptr), isStopped);
         list.push_back(job);
     }
 
-    int getJobIdToSet(){
+    int getJobIdToSet() {
         currJobId++;
-        return currJobId-1;
+        return currJobId - 1;
     }
 
     void printJobsList() {
@@ -191,8 +196,11 @@ public:
         }
     }
 
-    bool empty() {
-        return list.empty();
+    bool jobExist(int jobId) {
+        for (JobEntry job: list)
+            if (job.getJobId() == jobId)
+                return true;
+        return false;
     }
 
     void removeFinishedJobs() {
@@ -214,13 +222,6 @@ public:
             job++;
         }
         return nullptr;
-    }
-
-    bool jobExist(int jobId) {
-        for (JobEntry job: list)
-            if (job.getJobId() == jobId)
-                return true;
-        return false;
     }
 
     void removeJobByPos(int pos) {
@@ -270,11 +271,11 @@ public:
         time_t timeInserted;
         bool isStopped;
     public:
-        JobEntry(int processId, int jobId, Command *cmd, time_t timeInserted, bool isStopped) : processId(processId),
-                                                                                                jobId(jobId), cmd(cmd),
-                                                                                                timeInserted(
-                                                                                                        time(nullptr)),
-                                                                                                isStopped(isStopped) {}
+        JobEntry(int processId, int jobId, Command *cmd, bool isStopped, time_t timeInserted = time(nullptr))
+                : processId(processId),
+                  jobId(jobId), cmd(cmd),
+                  isStopped(isStopped),
+                  timeInserted(timeInserted) {}
 
         int getProcessId() {
             return processId;
@@ -316,7 +317,6 @@ public:
 };
 
 
-
 class JobsCommand : public BuiltInCommand {
     JobsList *jobs;
 public:
@@ -330,7 +330,7 @@ public:
 class KillCommand : public BuiltInCommand {
     JobsList *jobs;
 public:
-    KillCommand(const char *cmd_line, JobsList *jobs) :BuiltInCommand(cmd_line), jobs(jobs) {}
+    KillCommand(const char *cmd_line, JobsList *jobs) : BuiltInCommand(cmd_line), jobs(jobs) {}
 
     virtual ~KillCommand() {}
 
@@ -379,7 +379,7 @@ public:
 class SmallShell {
 private:
     string prompt;
-    char **plastPwd;
+    char *plastPwd;
     JobsList *jobs;
     JobEntry* currForegroundCommand;
 
@@ -408,6 +408,7 @@ public:
         *currForegroundCommand= job;
 
     }
+
     string getPrompt() {
         return prompt;
     }

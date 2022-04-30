@@ -1,9 +1,3 @@
-#include <unistd.h>
-#include <cstring>
-#include <iostream>
-#include <vector>
-#include <sstream>
-#include <sys/wait.h>
 #include "Commands.h"
 
 using namespace std;
@@ -105,24 +99,31 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
 
     string cmd_s = _trim(string(cmd_line));
     string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
+    size_t size = string(cmd_line).find_last_not_of(WHITESPACE) + 1;
+    if (_isBackgroundCommand(cmd_line))
+         size--;
+    char *built_in_cmd_line = new char[size];
+    for (int i = 0; i < size; ++i)
+        built_in_cmd_line[i] = cmd_line[i];
+    built_in_cmd_line[size] = 0;
     if (firstWord.compare("pwd") == 0) {
-        return new GetCurrDirCommand(cmd_line);
+        return new GetCurrDirCommand(built_in_cmd_line);
     } else if (firstWord.compare("showpid") == 0) {
-        return new ShowPidCommand(cmd_line);
+        return new ShowPidCommand(built_in_cmd_line);
     } else if (firstWord.compare("chprompt") == 0) {
-        return new ChangePromptCommand(cmd_line, &prompt);
+        return new ChangePromptCommand(built_in_cmd_line, &prompt);
     } else if (firstWord.compare("cd") == 0) {
-        return new ChangeDirCommand(cmd_line, plastPwd);
+        return new ChangeDirCommand(built_in_cmd_line, plastPwd);
     } else if (firstWord.compare("kill") == 0) {
-        return new KillCommand(cmd_line, jobs);
+        return new KillCommand(built_in_cmd_line, jobs);
     } else if (firstWord.compare("jobs") == 0) {
-        return new JobsCommand(cmd_line, jobs);
+        return new JobsCommand(built_in_cmd_line, jobs);
     } else if (firstWord.compare("fg") == 0) {
-        return new ForegroundCommand(cmd_line, jobs);
+        return new ForegroundCommand(built_in_cmd_line, jobs);
     } else if (firstWord.compare("bg") == 0) {
-        return new BackgroundCommand(cmd_line, jobs);
+        return new BackgroundCommand(built_in_cmd_line, jobs);
     } else if (firstWord.compare("quit") == 0) {
-        return new QuitCommand(cmd_line, jobs);
+        return new QuitCommand(built_in_cmd_line, jobs);
     } else {
         return new ExternalCommand(cmd_line);
     }
@@ -253,17 +254,16 @@ void ExternalCommand::execute() {
         SYS_CALL_ERROR_MESSAGE("fork");
     if (pid == 0) {
         setpgrp();
-        if (_isBackgroundCommand(getCmdLine().c_str())) {
-            SmallShell &smash = SmallShell::getInstance();
+        SmallShell &smash = SmallShell::getInstance();
+        if (_isBackgroundCommand(getCmdLine().c_str()))
             smash.getJobList()->addJob(this, false);
-        }else{
+        else
             smash.setJobToForeground(this);
-        }
-        char* argv[4];
-        char* new_cmd_line[COMMAND_ARGS_MAX_LENGTH];
-        strcpy(new_cmd_line,getCmdLine().c_str());
-        argv[2]=new_cmd_line;
-        argv[3]= nullptr;
+        char *argv[4];
+        char new_cmd_line[COMMAND_ARGS_MAX_LENGTH];
+        strcpy(new_cmd_line, getCmdLine().c_str());
+        argv[2] = new_cmd_line;
+        argv[3] = nullptr;
         argv[0] = (char *) malloc(10);
         strcpy(argv[0], "/bin/bash");
         argv[1] = (char *) malloc(3);
