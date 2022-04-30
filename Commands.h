@@ -107,12 +107,11 @@ public:
 };
 
 class ChangeDirCommand : public BuiltInCommand {
-    char **plastPwd;
+    string plastPwd;
 public:
-    ChangeDirCommand(const char *cmd_line, char **plastPwd) : BuiltInCommand(cmd_line), plastPwd(plastPwd) {}
+    ChangeDirCommand(const char *cmd_line, string plastPwd) : BuiltInCommand(cmd_line), plastPwd(plastPwd) {}
 
     virtual ~ChangeDirCommand() {
-        delete plastPwd;
     }
 
     void execute() override;
@@ -379,11 +378,11 @@ public:
 class SmallShell {
 private:
     string prompt;
-    char **plastPwd;
+    string plastPwd;
     JobsList *jobs;
     JobEntry* currForegroundCommand;
 
-    SmallShell();
+    SmallShell() ;
 
 public:
     //need to delete finished jobs before any job Insertion
@@ -412,8 +411,12 @@ public:
     string getPrompt() {
         return prompt;
     }
-
-
+    void setPlastPwd(char* lastPath){
+        plastPwd =string(lastPath);
+    }
+    string getPlastPwd(){
+        return plastPwd;
+    }
     void setPrompt(const string p) {
         prompt = p;
     }

@@ -20,7 +20,7 @@ using namespace std;
 #define SYS_CALL_ERROR_MESSAGE(name) do{\
     string ret =  "smash error: " + string(name) + " failed" ; \
     perror(ret.c_str());     \
-   } while(0)
+   return;} while(0)
 
 #define FAILURE -1
 
@@ -82,14 +82,12 @@ void _removeBackgroundSign(char *cmd_line) {
 
 // TODO: Add your implementation for classes in Commands.h 
 
-SmallShell::SmallShell() {
+SmallShell::SmallShell() :plastPwd(""){
     prompt = "smash";
-    plastPwd = nullptr;
-    jobs = nullptr;
+    jobs = new JobsList();
 }
 
 SmallShell::~SmallShell() {
-    delete plastPwd;
 }
 
 /**
@@ -101,7 +99,7 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
     string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
     size_t size = string(cmd_line).find_last_not_of(WHITESPACE) + 1;
     if (_isBackgroundCommand(cmd_line))
-         size--;
+        size--;
     char *built_in_cmd_line = new char[size];
     for (int i = 0; i < size; ++i)
         built_in_cmd_line[i] = cmd_line[i];
@@ -154,22 +152,26 @@ void ShowPidCommand::execute() {
 void ChangeDirCommand::execute() {
     if (getArgsCount() > 2)
         PRINT_SMASH_ERROR_AND_RETURN("too many arguments");
+    SmallShell &smash = SmallShell::getInstance();
     string path = string(getArgs()[1]);
     if (path.compare("-") == 0) {
-        if (plastPwd == nullptr)
+        if (plastPwd == "")
             PRINT_SMASH_ERROR_AND_RETURN("OLDPWD not set");
         char *tmp = get_current_dir_name();
-        if (chdir(*plastPwd) == FAILURE)
+        if (chdir(smash.getPlastPwd().c_str()) == FAILURE) {
             SYS_CALL_ERROR_MESSAGE("chdir");
-        delete plastPwd;
-        *plastPwd = tmp;
+        }
+        smash.setPlastPwd(tmp);
         return;
     }
     if (path.compare("\0") == 0)
         path = get_current_dir_name();
-    *plastPwd = get_current_dir_name();
-    chdir(path.c_str());
-
+    char *lastPath = get_current_dir_name();
+    if (chdir(path.c_str()) == FAILURE) {
+        SYS_CALL_ERROR_MESSAGE("chdir");
+    } else {
+        smash.setPlastPwd(lastPath);
+    }
 }
 
 void KillCommand::execute() {
@@ -187,6 +189,8 @@ void KillCommand::execute() {
 }
 
 void JobsCommand::execute() {
+    if (jobs == nullptr)
+        return;
     jobs->removeFinishedJobs();
     jobs->printJobsList();
 }
