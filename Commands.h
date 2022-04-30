@@ -379,7 +379,7 @@ public:
 class SmallShell {
 private:
     string prompt;
-    char *plastPwd;
+    char **plastPwd;
     JobsList *jobs;
     JobEntry* currForegroundCommand;
 
