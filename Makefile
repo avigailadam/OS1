@@ -18,7 +18,7 @@ $(TESTS_OUTPUTS): test_output%.txt: test_input%.txt test_expected_output%.txt
 	echo $(word 1, $^) ++PASSED++
 
 $(SMASH_BIN): $(OBJS)
-	$(COMPILER) $(COMPILER_FLAGS) $^ -o $@
+	$(COMPILER) $(COMPILER_FLAGS) $^ -o $@ -g
 
 $(OBJS): %.o: %.cpp
 	$(COMPILER) $(COMPILER_FLAGS) -c $^

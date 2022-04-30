@@ -80,7 +80,7 @@ void _removeBackgroundSign(char *cmd_line) {
     cmd_line[str.find_last_not_of(WHITESPACE, idx) + 1] = 0;
 }
 
-// TODO: Add your implementation for classes in Commands.h 
+// TODO: Add your implementation for classes in Commands.h
 
 SmallShell::SmallShell() :plastPwd(""){
     prompt = "smash";
@@ -189,7 +189,7 @@ void KillCommand::execute() {
 }
 
 void JobsCommand::execute() {
-    if (jobs == nullptr)
+    if (jobs->empty())
         return;
     jobs->removeFinishedJobs();
     jobs->printJobsList();
@@ -253,10 +253,12 @@ void QuitCommand::execute() {
 }
 
 void ExternalCommand::execute() {
+    cout<< "hello all"<<endl;
     pid_t pid = fork();
     if (pid == FAILURE)
         SYS_CALL_ERROR_MESSAGE("fork");
     if (pid == 0) {
+
         setpgrp();
         SmallShell &smash = SmallShell::getInstance();
         if (_isBackgroundCommand(getCmdLine().c_str()))
