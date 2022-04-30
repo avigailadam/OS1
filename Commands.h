@@ -26,6 +26,8 @@ public:
     }
 
     virtual ~Command() {
+        for(int i=0;i<argsCount;i++)
+            free(args[i]);
         delete[] args;
     }
 
@@ -148,11 +150,19 @@ private:
     vector<JobEntry> list;
     int currJobId;
 public:
-    JobsList();
+    JobsList(): currJobId(1){}
 
     ~JobsList();
 
-    void addJob(Command *cmd, bool isStopped = false);
+    void addJob(Command *cmd, bool isStopped = false){
+        JobEntry job(getpid(),getJobIdToSet(),cmd,time(nullptr),isStopped);
+        list.push_back(job);
+    }
+
+    int getJobIdToSet(){
+        currJobId++;
+        return currJobId-1;
+    }
 
     void printJobsList() {
         std::sort(list.begin(), list.end());
@@ -165,7 +175,9 @@ public:
         }
     }
 
-    void insertJob(string cmd_line);
+    static bool sortJobEntryByTime(JobEntry a, JobEntry b) {
+        return a.sortTime(b);
+    }
 
     void killAllJobs() {
         removeFinishedJobs();
@@ -194,23 +206,22 @@ public:
         }
     }
 
-    void killAllJobs() {
-        removeFinishedJobs();
-        std::sort(list.begin(), list.end());
-        cout << "sending SIGKILL signal to " << list.size() << " jobs:" << endl;
-        for (JobEntry job: list) {
-            pid_t pid = job.getProcessId();
-            cout << pid << ": " << job.getCmd() << endl;
-            if (kill(pid, SIGKILL) == -1)
-                perror("smash error: kill failed");
+    JobEntry *getJobById(int jobId) {
+        auto job = list.begin();
+        while (job != list.end()) {
+            if (job->getJobId() == jobId)
+                return &(*job);
+            job++;
         }
+        return nullptr;
     }
 
-    bool empty() {
-        return list.empty();
+    bool jobExist(int jobId) {
+        for (JobEntry job: list)
+            if (job.getJobId() == jobId)
+                return true;
+        return false;
     }
-
-    bool jobExist(int jobId);
 
     void removeJobByPos(int pos) {
         list.erase(list.begin() + pos);
@@ -304,16 +315,7 @@ public:
     };
 };
 
-void JobsList::insertJob(string cmd_line) {
 
-}
-
-bool JobsList::jobExist(int jobId) {
-    for (JobEntry job: list)
-        if (job.getJobId() == jobId)
-            return true;
-    return false;
-}
 
 class JobsCommand : public BuiltInCommand {
     JobsList *jobs;
@@ -328,7 +330,7 @@ public:
 class KillCommand : public BuiltInCommand {
     JobsList *jobs;
 public:
-    KillCommand(const char *cmd_line, JobsList *jobs);
+    KillCommand(const char *cmd_line, JobsList *jobs) :BuiltInCommand(cmd_line), jobs(jobs) {}
 
     virtual ~KillCommand() {}
 
@@ -379,6 +381,7 @@ private:
     string prompt;
     char **plastPwd;
     JobsList *jobs;
+    JobEntry* currForegroundCommand;
 
     SmallShell();
 
@@ -400,6 +403,11 @@ public:
 //hagai: need to delete finished jobs before any execute
     void executeCommand(const char *cmd_line);
 
+    void setJobToForeground(char* cmd_line){
+       JobsList::JobEntry job(getpid(),getJobIdToSet(),cmd,time(nullptr),isStopped);
+        *currForegroundCommand= job;
+
+    }
     string getPrompt() {
         return prompt;
     }

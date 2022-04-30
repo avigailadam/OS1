@@ -20,8 +20,15 @@ using namespace std;
 #endif
 
 #define PRINT_SMASH_ERROR_AND_RETURN(message)  do { \
-    cerr << "smash error: " << getName() << ":" << (message) << endl; \
+    cerr << "smash error: " << getName() << ": " << (message) << endl; \
     return;} while(0)
+
+#define SYS_CALL_ERROR_MESSAGE(name) do{\
+    string ret =  "smash error: " + string(name) + " failed" ; \
+    perror(ret.c_str());     \
+   } while(0)
+
+#define FAILURE -1
 
 
 const std::string WHITESPACE = " \n\r\t\f\v";
@@ -56,7 +63,7 @@ int _parseCommandLine(const char *cmd_line, char **args) {
 }
 
 
-bool _isBackgroundComamnd(const char *cmd_line) {
+bool _isBackgroundCommand(const char *cmd_line) {
     const string str(cmd_line);
     return str[str.find_last_not_of(WHITESPACE)] == '&';
 }
@@ -98,8 +105,6 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
 
     string cmd_s = _trim(string(cmd_line));
     string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-
-
     if (firstWord.compare("pwd") == 0) {
         return new GetCurrDirCommand(cmd_line);
     } else if (firstWord.compare("showpid") == 0) {
@@ -142,7 +147,7 @@ void GetCurrDirCommand::execute() {
 
 void ShowPidCommand::execute() {
     SmallShell &smash = SmallShell::getInstance();
-    cout << "smash pid is" << smash.getPid() << endl;
+    cout << "smash pid is " << smash.getPid() << endl;
 }
 
 void ChangeDirCommand::execute() {
@@ -203,15 +208,14 @@ void ForegroundCommand::execute() {
     }
     pid_t pid = currJob->getProcessId();
     cout << currJob->getCmd() << " : " << pid << endl;
-    if (kill(pid, SIGCONT) == -1)
-        perror("smash error: kill failed");
-    if (waitpid(pid, nullptr, 0) == -1)
-        perror("smash error: waitpid failed");
+    if (kill(pid, SIGCONT) == FAILURE)
+        SYS_CALL_ERROR_MESSAGE("kill");
+    if (waitpid(pid, nullptr, 0) == FAILURE)
+        SYS_CALL_ERROR_MESSAGE("waitpid");
     jobs->removeJobById(currJob->getJobId());
 }
 
 void BackgroundCommand::execute() {
-    JobsList::JobEntry *currJob = nullptr;
     if (getArgsCount() > 2 || getArgsCount() == 0)
         PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
     JobsList::JobEntry *job;
@@ -223,7 +227,7 @@ void BackgroundCommand::execute() {
     } else {
         job = jobs->getJobById(stoi(string((getArgs()[1]))));
         if (job == nullptr) {
-            cerr << "smash error: bg: job-id " << (*jobId) << " does not exist" << endl;
+            cerr << "smash error: bg: job-id " << getArgs()[1] << " does not exist" << endl;
             return;
         }
         if (!job->isStoppedJob()) {
@@ -244,25 +248,30 @@ void QuitCommand::execute() {
 }
 
 void ExternalCommand::execute() {
-    int pid = fork();
+    pid_t pid = fork();
     if (pid == FAILURE)
         SYS_CALL_ERROR_MESSAGE("fork");
     if (pid == 0) {
         setpgrp();
-        if (string(getArgs()[getArgsCount() - 1])[FAILURE] == '&') {
+        if (_isBackgroundCommand(getCmdLine().c_str())) {
             SmallShell &smash = SmallShell::getInstance();
             smash.getJobList()->addJob(this, false);
+        }else{
+            smash.setJobToForeground(this);
         }
-        char **argv = new char *[getArgsCount() + 2];
+        char* argv[4];
+        char* new_cmd_line[COMMAND_ARGS_MAX_LENGTH];
+        strcpy(new_cmd_line,getCmdLine().c_str());
+        argv[2]=new_cmd_line;
+        argv[3]= nullptr;
         argv[0] = (char *) malloc(10);
         strcpy(argv[0], "/bin/bash");
-        argv[getArgsCount() + 1] = nullptr;
-        for (int i = 1; i < getArgsCount() + 1; ++i)
-            argv[i] = getArgs()[i - 1];
+        argv[1] = (char *) malloc(3);
+        strcpy(argv[1], "-c");
         if (execv(argv[0], argv) == FAILURE)
             SYS_CALL_ERROR_MESSAGE("execv");
     } else {
-        if (string(getArgs()[getArgsCount() - 1])[FAILURE] != '&')
+        if (!_isBackgroundCommand(getCmdLine().c_str()))
             if (waitpid(pid, nullptr, WUNTRACED) == FAILURE)
                 SYS_CALL_ERROR_MESSAGE("waitpid");
     }
