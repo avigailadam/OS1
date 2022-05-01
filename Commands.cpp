@@ -13,16 +13,6 @@ using namespace std;
 #define FUNC_EXIT()
 #endif
 
-#define PRINT_SMASH_ERROR_AND_RETURN(message)  do { \
-    cerr << "smash error: " << getName() << ": " << (message) << endl; \
-    return;} while(0)
-
-#define SYS_CALL_ERROR_MESSAGE(name) do{\
-    string ret =  "smash error: " + string(name) + " failed" ; \
-    perror(ret.c_str());     \
-   return;} while(0)
-
-#define FAILURE -1
 
 
 const std::string WHITESPACE = " \n\r\t\f\v";
@@ -82,9 +72,10 @@ void _removeBackgroundSign(char *cmd_line) {
 
 // TODO: Add your implementation for classes in Commands.h
 
-SmallShell::SmallShell() :plastPwd(""){
+SmallShell::SmallShell() : plastPwd("") {
     prompt = "smash";
     jobs = new JobsList();
+    currForegroundCommand = nullptr;
 }
 
 SmallShell::~SmallShell() {
@@ -98,12 +89,10 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
     string cmd_s = _trim(string(cmd_line));
     string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
     size_t size = string(cmd_line).find_last_not_of(WHITESPACE) + 1;
-    if (_isBackgroundCommand(cmd_line))
-        size--;
     char *built_in_cmd_line = new char[size];
-    for (int i = 0; i < size; ++i)
-        built_in_cmd_line[i] = cmd_line[i];
-    built_in_cmd_line[size] = 0;
+    memcpy(built_in_cmd_line, cmd_line, size);
+    if (_isBackgroundCommand(built_in_cmd_line))
+        _removeBackgroundSign(built_in_cmd_line);
     if (firstWord.compare("pwd") == 0) {
         return new GetCurrDirCommand(built_in_cmd_line);
     } else if (firstWord.compare("showpid") == 0) {
@@ -131,6 +120,11 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
 
 void SmallShell::executeCommand(const char *cmd_line) {
     Command *cmd = CreateCommand(cmd_line);
+    if (dynamic_cast<BuiltInCommand *>(cmd))
+        setJobToForeground(cmd);
+    else
+        if(!_isBackgroundCommand(cmd_line))
+            setJobToForeground(cmd);
     cmd->execute();
 
 }
@@ -212,7 +206,9 @@ void ForegroundCommand::execute() {
         }
     }
     pid_t pid = currJob->getProcessId();
-    cout << currJob->getCmd() << " : " << pid << endl;
+    SmallShell &smash = SmallShell::getInstance();
+    smash.setJobToForeground(currJob->getCommand());
+    cout << currJob->getCmdLine() << " : " << pid << endl;
     if (kill(pid, SIGCONT) == FAILURE)
         SYS_CALL_ERROR_MESSAGE("kill");
     if (waitpid(pid, nullptr, 0) == FAILURE)
@@ -240,7 +236,7 @@ void BackgroundCommand::execute() {
             return;
         }
     }
-    cout << job->getCmd() << " : " << job->getProcessId() << endl;
+    cout << job->getCmdLine() << " : " << job->getProcessId() << endl;
     if (kill(job->getProcessId(), SIGCONT) == FAILURE)
         SYS_CALL_ERROR_MESSAGE("kill");
     job->setNotStopped();
@@ -253,21 +249,16 @@ void QuitCommand::execute() {
 }
 
 void ExternalCommand::execute() {
-    cout<< "hello all"<<endl;
     pid_t pid = fork();
     if (pid == FAILURE)
         SYS_CALL_ERROR_MESSAGE("fork");
     if (pid == 0) {
-
         setpgrp();
-        SmallShell &smash = SmallShell::getInstance();
-        if (_isBackgroundCommand(getCmdLine().c_str()))
-            smash.getJobList()->addJob(this, false);
-        else
-            smash.setJobToForeground(this);
+        setPid();
         char *argv[4];
         char new_cmd_line[COMMAND_ARGS_MAX_LENGTH];
         strcpy(new_cmd_line, getCmdLine().c_str());
+        _removeBackgroundSign(new_cmd_line);
         argv[2] = new_cmd_line;
         argv[3] = nullptr;
         argv[0] = (char *) malloc(10);
@@ -276,9 +267,19 @@ void ExternalCommand::execute() {
         strcpy(argv[1], "-c");
         if (execv(argv[0], argv) == FAILURE)
             SYS_CALL_ERROR_MESSAGE("execv");
+        free(argv[0]);
+        free(argv[1]);
     } else {
-        if (!_isBackgroundCommand(getCmdLine().c_str()))
+        if (_isBackgroundCommand(getCmdLine().c_str())) {
+            SmallShell &smash = SmallShell::getInstance();
+            smash.getJobList()->addJob(this, pid, false);
+        } else {
+            SmallShell &smash = SmallShell::getInstance();
+            smash.setForegroundPidFromFather(pid);
             if (waitpid(pid, nullptr, WUNTRACED) == FAILURE)
                 SYS_CALL_ERROR_MESSAGE("waitpid");
+        }
     }
 }
+
+BuiltInCommand::BuiltInCommand(const char *cmd_line) : Command(cmd_line) {}

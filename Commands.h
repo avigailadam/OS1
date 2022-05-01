@@ -13,6 +13,17 @@
 using namespace std;
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
+#define PRINT_SMASH_ERROR_AND_RETURN(message)  do { \
+    cerr << "smash error: " << getName() << ": " << (message) << endl; \
+    std::cerr.flush();\
+    return;} while(0)
+
+#define SYS_CALL_ERROR_MESSAGE(name) do{\
+    string ret =  "smash error: " + string(name) + " failed" ; \
+    perror(ret.c_str());     \
+   return;} while(0)
+
+#define FAILURE -1
 
 int _parseCommandLine(const char *cmd_line, char **args);
 
@@ -21,6 +32,7 @@ class Command {
     char **args;
     int argsCount;
     char *cmd_line;
+    pid_t pid;
 public:
     Command(const char *cmd_line) {
         args = new char *[COMMAND_MAX_ARGS];
@@ -34,6 +46,14 @@ public:
             free(args[i]);
         delete[] args;
         delete cmd_line;
+    }
+
+    void setPid(pid_t _pid = getpid()) {
+        pid = _pid;
+    }
+
+    pid_t getPid() {
+        return pid;
     }
 
     virtual void execute() = 0;
@@ -57,22 +77,24 @@ public:
         return name;
     }
 };
-
+class SmallShell;
 
 class BuiltInCommand : public Command {
 public:
-    BuiltInCommand(const char *cmd_line) : Command(cmd_line) {}
+    BuiltInCommand(const char *cmd_line);
 
     virtual ~BuiltInCommand() = default;
 };
 
 class ExternalCommand : public Command {
+
 public:
     ExternalCommand(const char *cmd_line) : Command(cmd_line) {}
 
     virtual ~ExternalCommand() = default;
 
     void execute() override;
+
 };
 
 class PipeCommand : public Command {
@@ -151,61 +173,60 @@ class JobsList {
 public:
     class JobEntry;
 private:
-    vector<JobEntry> list;
+    vector<JobEntry *> list;
     int currJobId;
 public:
     JobsList() : currJobId(1) {}
 
     ~JobsList();
 
-    void addJob(Command *cmd, bool isStopped = false) {
-        JobEntry job(getpid(), getJobIdToSet(), cmd, time(nullptr), isStopped);
+    void addJob(Command *cmd, pid_t pid, bool isStopped = false) {
+        JobEntry *job = new JobEntry(pid, getJobIdToSet(), cmd, isStopped, time(nullptr));
         list.push_back(job);
     }
 
     int getJobIdToSet() {
-        currJobId++;
-        return currJobId - 1;
+        return currJobId++;
     }
 
     void printJobsList() {
         std::sort(list.begin(), list.end());
         for (auto job: list) {
-            cout << "[" << job.getJobId() << "] " << job.getCommandName() << " : " << job.getProcessId() << " "
-                 << difftime(time(nullptr), job.getTime()) << " secs ";
-            if (job.isStoppedJob())
+            cout << "[" << job->getJobId() << "] " << job->getCommandName() << " : " << job->getProcessId() << " "
+                 << difftime(time(nullptr), job->getTime()) << " secs ";
+            if (job->isStoppedJob())
                 cout << "(stopped)";
             cout << endl;
         }
     }
 
-    static bool sortJobEntryByTime(JobEntry a, JobEntry b) {
-        return a.sortTime(b);
+    static bool sortJobEntryByTime(JobEntry *a, JobEntry *b) {
+        return a->sortTime(b);
     }
 
     void killAllJobs() {
         removeFinishedJobs();
         std::sort(list.begin(), list.end());
         cout << "sending SIGKILL signal to " << list.size() << " jobs:" << endl;
-        for (JobEntry job: list) {
-            pid_t pid = job.getProcessId();
-            cout << pid << ": " << job.getCmd() << endl;
+        for (JobEntry *job: list) {
+            pid_t pid = job->getProcessId();
+            cout << pid << ": " << job->getCmdLine() << endl;
             if (kill(pid, SIGKILL) == -1)
                 perror("smash error: kill failed");
         }
     }
 
     bool jobExist(int jobId) {
-        for (JobEntry job: list)
-            if (job.getJobId() == jobId)
+        for (JobEntry *job: list)
+            if (job->getJobId() == jobId)
                 return true;
         return false;
     }
 
     void removeFinishedJobs() {
         int pos = 0;
-        for (JobEntry job: list) {
-            if (waitpid(job.getProcessId(), nullptr, WNOHANG) > 0) {
+        for (JobEntry *job: list) {
+            if (waitpid(job->getProcessId(), nullptr, WNOHANG) > 0) {
                 removeJobByPos(pos);
                 pos--;
             }
@@ -216,8 +237,8 @@ public:
     JobEntry *getJobById(int jobId) {
         auto job = list.begin();
         while (job != list.end()) {
-            if (job->getJobId() == jobId)
-                return &(*job);
+            if ((*job)->getJobId() == jobId)
+                return *job;
             job++;
         }
         return nullptr;
@@ -229,9 +250,11 @@ public:
 
     void removeJobById(int jobId) {
         int pos = 0;
-        for (JobEntry job: list) {
-            if (jobId == job.getJobId())
+        for (JobEntry *job: list) {
+            if (jobId == job->getJobId()) {
+                delete list[pos];
                 list.erase(list.begin() + pos);
+            }
             pos++;
         }
     }
@@ -243,9 +266,9 @@ public:
         sort(list.begin(), list.end(), sortJobEntryByTime);
         int i = list.size();
         while (i > 0) {
-            if (list[i - 1].isStoppedJob()) {
-                *jobId = list[i - 1].getJobId();
-                return &list[i - 1];
+            if (list[i - 1]->isStoppedJob()) {
+                *jobId = list[i - 1]->getJobId();
+                return list[i - 1];
             }
             i--;
         }
@@ -260,7 +283,7 @@ public:
                 max = job;
             job++;
         }
-        return &(*max);
+        return *max;
     }
 
     class JobEntry {
@@ -293,8 +316,12 @@ public:
             return cmd->getArgs()[0];
         }
 
-        string getCmd() {
+        string getCmdLine() {
             return cmd->getCmdLine();
+        }
+
+        Command *getCommand() {
+            return cmd;
         }
 
         time_t getTime() const {
@@ -309,8 +336,8 @@ public:
             isStopped = false;
         }
 
-        bool sortTime(const JobEntry other) {
-            return difftime(getTime(), other.getTime()) > 0;
+        bool sortTime(const JobEntry *other) {
+            return difftime(getTime(), other->getTime()) > 0;
         }
     };
 };
@@ -382,7 +409,7 @@ private:
     JobsList *jobs;
     JobEntry* currForegroundCommand;
 
-    SmallShell() ;
+    SmallShell();
 
 public:
     //need to delete finished jobs before any job Insertion
@@ -411,14 +438,21 @@ public:
     string getPrompt() {
         return prompt;
     }
-    void setPlastPwd(char* lastPath){
-        plastPwd =string(lastPath);
+
+    void setPlastPwd(char *lastPath) {
+        plastPwd = string(lastPath);
     }
-    string getPlastPwd(){
+
+    string getPlastPwd() {
         return plastPwd;
     }
+
     void setPrompt(const string p) {
         prompt = p;
+    }
+
+    void setForegroundPidFromFather(pid_t pid) {
+        currForegroundCommand->setPid(pid);
     }
 
     pid_t getPid() {
@@ -429,6 +463,9 @@ public:
         return jobs;
     }
 
+    Command *getForegroundCommand() {
+        return currForegroundCommand;
+    }
     // TODO: add extra methods as needed
 };
 
