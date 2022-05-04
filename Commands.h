@@ -65,8 +65,12 @@ public:
         return args;
     }
 
-    string getCmdLine() const {
+    string getCmdLineAsString() const {
         return string(cmd_line);
+    }
+
+    char* getCmdLine() const{
+        return cmd_line;
     }
 
     int getArgsCount() const {
@@ -98,13 +102,14 @@ public:
 };
 
 class PipeCommand : public Command {
-    // TODO: Add your data members
 public:
-    PipeCommand(const char *cmd_line);
+    PipeCommand(const char *cmd_line): Command(cmd_line){}
 
     virtual ~PipeCommand() {}
 
     void execute() override;
+
+    void seperate_through_pipe(char *pString, char *pString1);
 };
 
 class RedirectionCommand : public Command {
@@ -178,21 +183,28 @@ private:
 public:
     JobsList() : currJobId(1) {}
 
-    ~JobsList();
+    ~JobsList() = default;
 
-    void addJob(Command *cmd, pid_t pid, bool isStopped = false) {
-        JobEntry *job = new JobEntry(pid, getJobIdToSet(), cmd, isStopped, time(nullptr));
+    void addJob(Command *cmd, int jobId, pid_t pid, bool isStopped = false) {
+        JobEntry *job = new JobEntry(pid, jobId, cmd, isStopped, time(nullptr));
         list.push_back(job);
     }
 
     int getJobIdToSet() {
+        if(list.empty())
+            return 1;
+        currJobId = (*list.begin())->getJobId();
+        for (auto job: list) {
+            if(currJobId<job->getJobId())
+                currJobId=job->getJobId();
+        }
         return currJobId++;
     }
 
     void printJobsList() {
         std::sort(list.begin(), list.end());
         for (auto job: list) {
-            cout << "[" << job->getJobId() << "] " << job->getCommandName() << " : " << job->getProcessId() << " "
+            cout << "[" << job->getJobId() << "] " << job->getCmdLine() << " : " << job->getProcessId() << " "
                  << difftime(time(nullptr), job->getTime()) << " secs ";
             if (job->isStoppedJob())
                 cout << "(stopped)";
@@ -245,12 +257,13 @@ public:
     }
 
     void removeJobByPos(int pos) {
+        delete list[pos];
         list.erase(list.begin() + pos);
     }
 
     void removeJobById(int jobId) {
-        int pos = 0;
-        for (JobEntry *job: list) {
+        for (int pos=0; pos<list.size();pos++) {
+            JobEntry* job =list[pos];
             if (jobId == job->getJobId()) {
                 delete list[pos];
                 list.erase(list.begin() + pos);
@@ -287,21 +300,23 @@ public:
     }
 
     class JobEntry {
-        int processId;
         int jobId;
         Command *cmd;
         time_t timeInserted;
         bool isStopped;
     public:
-        JobEntry(int processId, int jobId, Command *cmd, bool isStopped, time_t timeInserted = time(nullptr))
-                : processId(processId),
-                  jobId(jobId), cmd(cmd),
+        JobEntry(int pid, int jobId, Command *cmd, bool isStopped, time_t timeInserted = time(nullptr))
+                : jobId(jobId), cmd(cmd),
                   isStopped(isStopped),
-                  timeInserted(timeInserted) {}
+                  timeInserted(timeInserted) {
+            cmd->setPid(pid);
+        }
 
         int getProcessId() {
-            return processId;
+            return cmd->getPid();
         }
+
+        ~JobEntry() = default;
 
         bool operator<(const JobEntry &other) {
             return jobId < other.jobId;
@@ -317,7 +332,7 @@ public:
         }
 
         string getCmdLine() {
-            return cmd->getCmdLine();
+            return cmd->getCmdLineAsString();
         }
 
         Command *getCommand() {
@@ -463,8 +478,16 @@ public:
         return jobs;
     }
 
+    int getForegroundJobId() {
+        return fgJobId;
+    }
+
     Command *getForegroundCommand() {
         return currForegroundCommand;
+    }
+
+    void resetForegroundJob() {
+        currForegroundCommand = nullptr;
     }
     // TODO: add extra methods as needed
 };

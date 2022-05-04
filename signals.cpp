@@ -11,10 +11,14 @@ void ctrlZHandler(int sig_num) {
     Command *fg = smash.getForegroundCommand();
     if (fg == nullptr)
         return;
-    smash.getJobList()->addJob(fg, fg->getPid(), true);
+    int jobIdToSet = smash.getForegroundJobId();
+    if (jobIdToSet == -1)
+        jobIdToSet = smash.getJobList()->getJobIdToSet();
+    smash.getJobList()->addJob(fg, jobIdToSet, fg->getPid(), true);
     if (kill(fg->getPid(), SIGSTOP) == FAILURE)
         SYS_CALL_ERROR_MESSAGE("stop");
     cout << "smash: process " << fg->getPid() << " was stopped" << endl;
+    smash.resetForegroundJob();
 }
 
 void ctrlCHandler(int sig_num) {
@@ -26,9 +30,12 @@ void ctrlCHandler(int sig_num) {
     if (kill(fg->getPid(), SIGKILL) == FAILURE)
         SYS_CALL_ERROR_MESSAGE("kill");
     cout << "smash: process " << fg->getPid() << " was killed" << endl;
+    smash.resetForegroundJob();
 }
 
 void alarmHandler(int sig_num) {
-    // TODO: Add your implementation
+    cout << "smash: got an alarm" << endl;
+
+//    cout<< "smash: "<<[command-line] <<" timed out!"<< endl;
 }
 

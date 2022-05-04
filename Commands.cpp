@@ -14,7 +14,6 @@ using namespace std;
 #endif
 
 
-
 const std::string WHITESPACE = " \n\r\t\f\v";
 
 string _ltrim(const std::string &s) {
@@ -70,15 +69,25 @@ void _removeBackgroundSign(char *cmd_line) {
     cmd_line[str.find_last_not_of(WHITESPACE, idx) + 1] = 0;
 }
 
-// TODO: Add your implementation for classes in Commands.h
+bool _isRedirectionCommand(const char *cmd_line) {
+    const string str(cmd_line);
+    return str.find(">") != string::npos | str.find(">>") != string::npos;
+}
 
-SmallShell::SmallShell() : plastPwd("") {
+bool _isPipeCommand(const char *cmd_line){
+    const string str(cmd_line);
+    return str.find("|") != string::npos | str.find("|&") != string::npos;
+}
+
+SmallShell::SmallShell() : plastPwd(""), fgJobId(0) {
     prompt = "smash";
     jobs = new JobsList();
     currForegroundCommand = nullptr;
 }
 
 SmallShell::~SmallShell() {
+    delete jobs;
+    delete currForegroundCommand;
 }
 
 /**
@@ -111,6 +120,12 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
         return new BackgroundCommand(built_in_cmd_line, jobs);
     } else if (firstWord.compare("quit") == 0) {
         return new QuitCommand(built_in_cmd_line, jobs);
+    }else if (firstWord.compare("tail") == 0) {
+            return new TailCommand(built_in_cmd_line);
+    } else if(_isPipeCommand(cmd_line)){
+        return new PipeCommand(cmd_line);
+    } else if(_isRedirectionCommand(cmd_line)){
+        return new RedirectionCommand(cmd_line);
     } else {
         return new ExternalCommand(cmd_line);
     }
@@ -122,9 +137,8 @@ void SmallShell::executeCommand(const char *cmd_line) {
     Command *cmd = CreateCommand(cmd_line);
     if (dynamic_cast<BuiltInCommand *>(cmd))
         setJobToForeground(cmd);
-    else
-        if(!_isBackgroundCommand(cmd_line))
-            setJobToForeground(cmd);
+    else if (!_isBackgroundCommand(cmd_line))
+        setJobToForeground(cmd);
     cmd->execute();
 
 }
@@ -201,18 +215,20 @@ void ForegroundCommand::execute() {
         int jobId = stoi(string(getArgs()[1]));
         currJob = jobs->getJobById(jobId);
         if (currJob == nullptr) {
-            cerr << "smash error: fg: job-id" << jobId << "does not exists" << endl;
+            cerr << "smash error: fg: job-id " << jobId << " does not exists" << endl;
             return;
         }
     }
     pid_t pid = currJob->getProcessId();
     SmallShell &smash = SmallShell::getInstance();
-    smash.setJobToForeground(currJob->getCommand());
+    smash.setJobToForeground(currJob->getCommand(), currJob->getJobId());
     cout << currJob->getCmdLine() << " : " << pid << endl;
-    if (kill(pid, SIGCONT) == FAILURE)
+    if (killpg(pid, SIGCONT) == FAILURE)
         SYS_CALL_ERROR_MESSAGE("kill");
-    if (waitpid(pid, nullptr, 0) == FAILURE)
+    if (waitpid(pid, nullptr, WUNTRACED) == FAILURE)
         SYS_CALL_ERROR_MESSAGE("waitpid");
+    assert(currJob);
+    assert(jobs);
     jobs->removeJobById(currJob->getJobId());
 }
 
@@ -257,7 +273,7 @@ void ExternalCommand::execute() {
         setPid();
         char *argv[4];
         char new_cmd_line[COMMAND_ARGS_MAX_LENGTH];
-        strcpy(new_cmd_line, getCmdLine().c_str());
+        strcpy(new_cmd_line, getCmdLineAsString().c_str());
         _removeBackgroundSign(new_cmd_line);
         argv[2] = new_cmd_line;
         argv[3] = nullptr;
@@ -270,16 +286,100 @@ void ExternalCommand::execute() {
         free(argv[0]);
         free(argv[1]);
     } else {
-        if (_isBackgroundCommand(getCmdLine().c_str())) {
+        if (_isBackgroundCommand(getCmdLineAsString().c_str())) {
             SmallShell &smash = SmallShell::getInstance();
-            smash.getJobList()->addJob(this, pid, false);
+            int jobIdToSet = smash.getJobList()->getJobIdToSet();
+            smash.getJobList()->addJob(this, jobIdToSet, pid, false);
         } else {
             SmallShell &smash = SmallShell::getInstance();
             smash.setForegroundPidFromFather(pid);
+            smash.setJobToForeground(this);
             if (waitpid(pid, nullptr, WUNTRACED) == FAILURE)
                 SYS_CALL_ERROR_MESSAGE("waitpid");
         }
     }
 }
 
+bool isValidNumber(const string &str) {
+    for (char const &c : str) {
+        if (std::isdigit(c) == 0) return false;
+    }
+    return true;
+}
+
+
+void TailCommand::execute() {
+    if (getArgsCount() > 3 || getArgsCount() <= 1)
+        PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
+    int N = 10;
+    string path = string(getArgs()[1]);
+    if (getArgsCount() == 3) {
+        if (!(isValidNumber(string(getArgs()[1]))))
+            PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
+        if(stoi(string(getArgs()[1])) >= 0)
+            PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
+        cout<< stoi(string(getArgs()[1])) <<endl;
+        N = stoi(string(getArgs()[1]));
+        N = -N;
+        path = string(getArgs()[2]);
+    }
+    ifstream file;
+    file.open(path,ifstream::in);
+    if(!file){
+        perror("smash error: open failed");
+        return;
+    }
+    string line;
+    for (int i = 0; i < N && getline(file, line); i++) {
+        cout << line << endl;
+    }
+    file.close();
+
+
+}
+
 BuiltInCommand::BuiltInCommand(const char *cmd_line) : Command(cmd_line) {}
+
+void PipeCommand::execute() {
+    int pipeline[2];
+    if (pipe(pipeline) == FAILURE)
+        SYS_CALL_ERROR_MESSAGE("pipe");
+    char *cmd_line1, *cmd_line2;
+    seperate_through_pipe(cmd_line1, cmd_line1);
+    SmallShell &smash = SmallShell::getInstance();
+    Command *cmd1 = smash.CreateCommand(cmd_line1);
+    Command *cmd2 = smash.CreateCommand(cmd_line2);
+    pid_t pid1 = fork();
+    if (pid1 == FAILURE)
+        SYS_CALL_ERROR_MESSAGE("fork");
+    if (pid1 == 0) {
+        setpgrp();
+        setPid();
+        close(pipeline[1]);
+        cmd2->execute();
+        exit(0);
+    }
+    pid_t pid2 = fork();
+    if (pid2  == FAILURE)
+        SYS_CALL_ERROR_MESSAGE("fork");
+    if (pid2 == 0){
+        close(pipeline[0]);
+        cmd1->execute();
+    }
+}
+
+void PipeCommand::seperate_through_pipe(char *pString, char *pString1) {
+    char *p = getCmdLine();
+    char *curr = pString;
+    while (p++) {
+        if (*p == '|') {
+            curr = pString1;
+            continue;
+        }
+        *(curr++) = *p;
+    }
+}
+
+void RedirectionCommand::execute() {
+
+}
