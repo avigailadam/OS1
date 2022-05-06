@@ -84,8 +84,9 @@ public:
 class SmallShell;
 
 class BuiltInCommand : public Command {
+    pid_t smash_pid;
 public:
-    BuiltInCommand(const char *cmd_line);
+    BuiltInCommand(const char *cmd_line): Command(cmd_line){}
 
     virtual ~BuiltInCommand() = default;
 };
@@ -108,8 +109,6 @@ public:
     virtual ~PipeCommand() {}
 
     void execute() override;
-
-    void seperate_through_pipe(char *pString, char *pString1);
 };
 
 class RedirectionCommand : public Command {
@@ -462,16 +461,12 @@ public:
         return plastPwd;
     }
 
-    void setPrompt(const string p) {
-        prompt = p;
-    }
-
     void setForegroundPidFromFather(pid_t pid) {
         currForegroundCommand->setPid(pid);
     }
 
     pid_t getPid() {
-        return getpid();
+        return pid;
     }
 
     JobsList *getJobList() {

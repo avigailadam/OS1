@@ -71,18 +71,19 @@ void _removeBackgroundSign(char *cmd_line) {
 
 bool _isRedirectionCommand(const char *cmd_line) {
     const string str(cmd_line);
-    return str.find(">") != string::npos | str.find(">>") != string::npos;
+    return str.find(">") != string::npos || str.find(">>") != string::npos;
 }
 
-bool _isPipeCommand(const char *cmd_line){
+bool _isPipeCommand(const char *cmd_line) {
     const string str(cmd_line);
-    return str.find("|") != string::npos | str.find("|&") != string::npos;
+    return str.find("|") != string::npos || str.find("|&") != string::npos;
 }
 
 SmallShell::SmallShell() : plastPwd(""), fgJobId(0) {
     prompt = "smash";
     jobs = new JobsList();
     currForegroundCommand = nullptr;
+    pid = getpid();
 }
 
 SmallShell::~SmallShell() {
@@ -97,12 +98,16 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
 
     string cmd_s = _trim(string(cmd_line));
     string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-    size_t size = string(cmd_line).find_last_not_of(WHITESPACE) + 1;
+    size_t size = string(cmd_line).find_last_not_of(WHITESPACE) + 2;
     char *built_in_cmd_line = new char[size];
     memcpy(built_in_cmd_line, cmd_line, size);
     if (_isBackgroundCommand(built_in_cmd_line))
         _removeBackgroundSign(built_in_cmd_line);
-    if (firstWord.compare("pwd") == 0) {
+    if (_isPipeCommand(cmd_line)) {
+        return new PipeCommand(cmd_line);
+    } else if (_isRedirectionCommand(cmd_line)) {
+        return new RedirectionCommand(cmd_line);
+    }else if (firstWord.compare("pwd") == 0) {
         return new GetCurrDirCommand(built_in_cmd_line);
     } else if (firstWord.compare("showpid") == 0) {
         return new ShowPidCommand(built_in_cmd_line);
@@ -120,13 +125,11 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
         return new BackgroundCommand(built_in_cmd_line, jobs);
     } else if (firstWord.compare("quit") == 0) {
         return new QuitCommand(built_in_cmd_line, jobs);
-    }else if (firstWord.compare("tail") == 0) {
-            return new TailCommand(built_in_cmd_line);
-    } else if(_isPipeCommand(cmd_line)){
-        return new PipeCommand(cmd_line);
-    } else if(_isRedirectionCommand(cmd_line)){
-        return new RedirectionCommand(cmd_line);
-    } else {
+    } else if (firstWord.compare("tail") == 0) {
+        return new TailCommand(built_in_cmd_line);
+    } else if (firstWord.compare("touch") == 0) {
+        return new TouchCommand(built_in_cmd_line);
+    } else{
         return new ExternalCommand(cmd_line);
     }
 
@@ -259,7 +262,7 @@ void BackgroundCommand::execute() {
 }
 
 void QuitCommand::execute() {
-    if (getArgsCount() >= 1 && string(getArgs()[1]).compare("kill"))
+    if (getArgsCount() > 1 && string(getArgs()[1]).compare("kill"))
         jobs->killAllJobs();
     exit(0);
 }
@@ -314,18 +317,17 @@ void TailCommand::execute() {
     int N = 10;
     string path = string(getArgs()[1]);
     if (getArgsCount() == 3) {
-        if (!(isValidNumber(string(getArgs()[1]))))
+        if (path[0] != '-')
             PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
-        if(stoi(string(getArgs()[1])) >= 0)
+        path.erase(0, 1);
+        if (!(isValidNumber(path)))
             PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
-        cout<< stoi(string(getArgs()[1])) <<endl;
-        N = stoi(string(getArgs()[1]));
-        N = -N;
+        N = stoi(path);
         path = string(getArgs()[2]);
     }
     ifstream file;
-    file.open(path,ifstream::in);
-    if(!file){
+    file.open(path, ifstream::in);
+    if (!file) {
         perror("smash error: open failed");
         return;
     }
@@ -338,48 +340,101 @@ void TailCommand::execute() {
 
 }
 
-BuiltInCommand::BuiltInCommand(const char *cmd_line) : Command(cmd_line) {}
+string string_before_char(string orig, string c) {
+    return _trim(orig.substr(0, orig.find(c)));
+}
+
+string string_after_char(string orig, string c) {
+    return _trim(orig.substr(orig.find(c) + c.size()));
+}
+
+
+void TouchCommand::execute() {
+    if (getArgsCount() != 3)
+        PRINT_SMASH_ERROR_AND_RETURN("invalid arguments");
+    string timeToSet= string(getArgs()[2]);
+    struct tm time;
+    time.tm_sec = stoi(string_before_char(timeToSet, ":"));
+    timeToSet = string_after_char(timeToSet, ":");
+    time.tm_min = stoi(string_before_char(timeToSet,":"));
+    timeToSet = string_after_char(timeToSet, ":");
+    time.tm_hour = stoi(string_before_char(timeToSet,":"))-1;
+    timeToSet = string_after_char(timeToSet, ":");
+    time.tm_mday = stoi(string_before_char(timeToSet,":"));
+    timeToSet = string_after_char(timeToSet, ":");
+    time.tm_mon = stoi(string_before_char(timeToSet,":"))-1;
+    time.tm_year = stoi(string_after_char(timeToSet, ":"))-1900;
+    time_t new_time = mktime(&time);
+    struct utimbuf utimeToSet;
+    utimeToSet.modtime = new_time;
+
+    utimeToSet.actime = new_time;
+    if (utime(getArgs()[1], &utimeToSet) == FAILURE){
+        SYS_CALL_ERROR_MESSAGE("utime");
+    }
+
+}
+
+
 
 void PipeCommand::execute() {
     int pipeline[2];
     if (pipe(pipeline) == FAILURE)
         SYS_CALL_ERROR_MESSAGE("pipe");
-    char *cmd_line1, *cmd_line2;
-    seperate_through_pipe(cmd_line1, cmd_line1);
+    string c = getCmdLineAsString().find("|&") == string::npos ? "|" : "|&";
+    string cmd_line1 = string_before_char(getCmdLineAsString(), c);
+    string cmd_line2 = string_after_char(getCmdLineAsString(), c);
     SmallShell &smash = SmallShell::getInstance();
-    Command *cmd1 = smash.CreateCommand(cmd_line1);
-    Command *cmd2 = smash.CreateCommand(cmd_line2);
     pid_t pid1 = fork();
     if (pid1 == FAILURE)
         SYS_CALL_ERROR_MESSAGE("fork");
     if (pid1 == 0) {
         setpgrp();
         setPid();
+        close(c == "|" ? 1 : 2);
+        close(pipeline[0]);
+        dup2(pipeline[1], c == "|" ? 1 : 2);
+        smash.executeCommand(cmd_line1.c_str());
         close(pipeline[1]);
-        cmd2->execute();
         exit(0);
     }
     pid_t pid2 = fork();
-    if (pid2  == FAILURE)
+    if (pid2 == FAILURE)
         SYS_CALL_ERROR_MESSAGE("fork");
-    if (pid2 == 0){
+    if (pid2 == 0) {
+        setpgrp();
+        setPid();
+        close(c == "|" ? 0 : 2);
+        close(pipeline[1]);
+        dup2(pipeline[0], c == "|" ? 0 : 2);
         close(pipeline[0]);
-        cmd1->execute();
+        smash.executeCommand(cmd_line2.c_str());
+        exit(0);
     }
-}
-
-void PipeCommand::seperate_through_pipe(char *pString, char *pString1) {
-    char *p = getCmdLine();
-    char *curr = pString;
-    while (p++) {
-        if (*p == '|') {
-            curr = pString1;
-            continue;
-        }
-        *(curr++) = *p;
-    }
+    close(pipeline[0]);
+    close(pipeline[1]);
+    wait(nullptr);
+    wait(nullptr);
 }
 
 void RedirectionCommand::execute() {
-
+    string c = getCmdLineAsString().find(">>") == string::npos ? ">" : ">>";
+    string cmd = string_before_char(getCmdLineAsString(), c);
+    string path = string_after_char(getCmdLineAsString(), c);
+    pid_t pid = fork();
+    if (pid == FAILURE)
+        SYS_CALL_ERROR_MESSAGE("fork");
+    if (pid == 0) {
+        setpgrp();
+        setPid();
+        int new_fd = open(path.c_str(), O_WRONLY | O_CREAT | (c == ">" ? O_TRUNC : O_APPEND), 0777);
+        if (new_fd == FAILURE)
+            SYS_CALL_ERROR_MESSAGE("open");
+        close(1);
+        dup2(new_fd, 1);
+        SmallShell &smash = SmallShell::getInstance();
+        smash.executeCommand(cmd.c_str());
+        close(new_fd);
+        exit(0);
+    }
 }
